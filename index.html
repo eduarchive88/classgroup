@@ -114,6 +114,17 @@
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     현재 학급 삭제
                 </button>
+                
+                <!-- 데이터 백업 및 복원 버튼 추가 -->
+                <div class="flex gap-2 mt-2 pt-2 border-t border-gray-200">
+                    <button onclick="backupData()" class="flex-1 text-[11px] bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 py-1.5 rounded transition font-medium flex items-center justify-center gap-1 shadow-sm">
+                        💾 백업
+                    </button>
+                    <label class="flex-1 text-[11px] bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 py-1.5 rounded transition font-medium flex items-center justify-center gap-1 shadow-sm cursor-pointer m-0">
+                        📂 복원
+                        <input type="file" id="restore-upload" accept=".json" class="hidden" onchange="restoreData(event)">
+                    </label>
+                </div>
             </div>
 
             <!-- 기능 및 업로드 컨트롤 (화면이 작을 때 자체 스크롤 발생하도록 수정) -->
@@ -382,6 +393,58 @@
             curClass.groupSize = parseInt(document.getElementById('group-size').value);
             saveData();
             renderClassroom();
+        }
+
+        // ==========================================
+        // 데이터 백업 및 복원 로직
+        // ==========================================
+        function backupData() {
+            const dataStr = JSON.stringify(appState);
+            const blob = new Blob([dataStr], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            
+            // 오늘 날짜를 파일명에 포함 (예: 스마트자리배치도_백업_2024-05-20.json)
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const exportFileName = `스마트자리배치도_백업_${dateStr}.json`;
+
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', url);
+            linkElement.setAttribute('download', exportFileName);
+            document.body.appendChild(linkElement);
+            linkElement.click();
+            document.body.removeChild(linkElement);
+            URL.revokeObjectURL(url);
+        }
+
+        function restoreData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const restoredState = JSON.parse(e.target.result);
+                    
+                    // 간단한 유효성 검사 (classes 배열이 있는지 확인)
+                    if (restoredState && Array.isArray(restoredState.classes)) {
+                        if (confirm("데이터를 복원하면 현재 저장된 모든 학급 정보가 지워지고 백업 파일로 덮어씌워집니다. 계속하시겠습니까?")) {
+                            appState = restoredState;
+                            saveData();
+                            syncUIWithState();
+                            alert("데이터가 성공적으로 복원되었습니다.");
+                        }
+                    } else {
+                        alert("올바른 백업 파일(.json) 형식이 아닙니다.");
+                    }
+                } catch (error) {
+                    console.error("복원 에러:", error);
+                    alert("파일을 읽는 중 오류가 발생했습니다. 정상적인 백업 파일인지 확인해주세요.");
+                }
+                
+                // 다시 같은 파일을 올려도 인식되도록 초기화
+                event.target.value = '';
+            };
+            reader.readAsText(file);
         }
 
         // ==========================================
