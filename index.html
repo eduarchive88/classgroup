@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>스마트 모둠 자리 배치도</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 엑셀 파일(xls, xlsx) 리더 라이브러리 추가 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background-color: #f3f4f6;
+            margin: 0;
+        }
+
+        /* 드래그 앤 드롭 시 시각적 효과 */
+        .dragging { opacity: 0.5; transform: scale(0.95); }
+        .drag-over {
+            border-color: #3b82f6 !important;
+            background-color: #eff6ff !important;
+            box-shadow: 0 0 0 2px #bfdbfe;
+        }
+
+        /* 모둠장 지정 모드일 때 책상 호버 효과 */
+        .leader-mode-active .desk-occupied {
+            cursor: pointer !important;
+            transition: transform 0.1s;
+        }
+        .leader-mode-active .desk-occupied:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 인쇄 시 레이아웃 최적화 (A4 1페이지 꽉차게) */
+        @media print {
+            @page {
+                size: A4 landscape; /* 가로 방향 인쇄 */
+                margin: 0; /* 브라우저 기본 머리말/꼬리말 제거 효과 */
+            }
+            body, html {
+                width: 100%; height: 100%;
+                background-color: white;
+            }
+            .no-print { display: none !important; }
+            
+            main { padding: 0 !important; }
+            
+            #classroom-container {
+                width: 100vw !important;
+                height: 100vh !important;
+                max-width: none !important;
+                margin: 0 !important;
+                padding: 10mm 15mm !important; /* 인쇄 여백 */
+                box-shadow: none !important;
+                border: none !important;
+                display: flex !important;
+                flex-direction: column !important;
+                justify-content: center !important;
+                border-radius: 0 !important;
+                box-sizing: border-box !important;
+            }
+            .desk-occupied {
+                border: 2px solid #000 !important;
+                background-color: #fff !important;
+            }
+            /* 모둠장 인쇄 스타일 유지 */
+            .desk-leader {
+                border: 3px solid #d97706 !important; 
+                background-color: #fef3c7 !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .desk-empty { border: 1px dashed #ccc !important; }
+            #groups-grid { gap: 1rem !important; }
+            .desk { height: 3.5rem !important; } /* 책상 높이 약간 축소하여 1페이지 진입 유도 */
+            .desk div:last-child { font-size: 1rem !important; } /* 이름 폰트 크기 조절 */
+        }
+
+        /* 커스텀 스크롤바 */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body id="main-body" class="flex flex-col h-screen overflow-hidden text-gray-800">
+
+    <!-- 상단/중앙 메인 레이아웃 -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- 사이드바 (명단 및 컨트롤) -->
+        <aside class="w-80 bg-white border-r border-gray-200 flex flex-col h-full shadow-lg z-10 no-print shrink-0">
+            <!-- 헤더 고정 -->
+            <div class="p-5 border-b border-gray-100 bg-blue-50 shrink-0">
+                <h1 class="text-xl font-bold text-blue-800 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    스마트 모둠 자리 배치도
+                </h1>
+            </div>
+
+            <!-- 학급 관리 모듈 고정 -->
+            <div class="p-4 border-b border-gray-100 bg-gray-50 shrink-0">
+                <div class="flex items-center justify-between mb-2">
+                    <label class="text-xs font-bold text-gray-700">학급 관리 (자동 저장)</label>
+                    <button onclick="addClass()" class="text-xs bg-white border border-blue-300 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-50 transition">+ 학급 추가</button>
+                </div>
+                <select id="class-select" class="w-full text-sm border-gray-300 border rounded px-3 py-2 bg-white focus:border-blue-500 outline-none mb-2 font-medium shadow-sm" onchange="switchClass()"></select>
+                <button onclick="deleteCurrentClass()" class="w-full text-xs text-red-500 hover:text-red-700 py-1 flex items-center justify-center gap-1 transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    현재 학급 삭제
+                </button>
+            </div>
+
+            <!-- 기능 및 업로드 컨트롤 (화면이 작을 때 자체 스크롤 발생하도록 수정) -->
+            <div class="p-4 border-b border-gray-100 space-y-4 overflow-y-auto shrink-0 max-h-[40vh]">
+                <!-- 수업명 입력 -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">수업명 (인쇄용 제목)</label>
+                    <input type="text" id="class-title" placeholder="예: 1학년 1반 과학탐구실험" class="w-full text-sm border-gray-300 border rounded px-3 py-2 focus:border-blue-500 outline-none" oninput="updateTitleAndSave()">
+                </div>
+
+                <!-- 시점 변경 버튼 -->
+                <button onclick="toggleTeacherView()" id="teacher-view-btn" class="w-full bg-sky-600 hover:bg-sky-700 text-white py-2 px-3 rounded text-sm font-bold transition-colors shadow-sm flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                    </svg>
+                    교사 시점 (칠판 아래로)
+                </button>
+
+                <!-- 자동 배치 버튼 모음 -->
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="toggleLeaderMode()" id="leader-mode-btn" class="col-span-2 bg-amber-500 hover:bg-amber-600 text-white py-2 px-3 rounded text-sm font-bold transition-colors flex items-center justify-center gap-1">
+                        👑 모둠장 지정 (클릭 시 켜짐)
+                    </button>
+                    <button onclick="sequentialSeats()" class="bg-blue-600 hover:bg-blue-700 text-white py-2 px-3 rounded text-sm font-medium transition-colors">번호순 배치</button>
+                    <button onclick="randomizeSeats()" class="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-3 rounded text-sm font-medium transition-colors">랜덤 배치</button>
+                    <button onclick="resetSeats()" class="col-span-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-2 px-3 rounded text-sm font-medium transition-colors">전체 자리 비우기</button>
+                </div>
+
+                <!-- 파일 업로드 및 인쇄 -->
+                <div class="pt-2 border-t border-gray-100">
+                    <div class="mb-2 bg-yellow-50 p-2 rounded border border-yellow-200 text-[10px] text-yellow-800 leading-tight">
+                        <span class="font-bold">📥 나이스 명렬표 업로드:</span><br>
+                        [나이스] - [교과담임] - [출결관리] - [교과시간별출석부출력] - [디스켓 클릭 - xls저장] 후 업로드 하세요.
+                    </div>
+                    
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">명렬표 (XLS, XLSX, CSV) 업로드</label>
+                    <input type="file" id="excel-upload" accept=".csv, .xls, .xlsx" class="block w-full text-xs text-gray-500 mb-3
+                        file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 cursor-pointer"/>
+                    
+                    <button onclick="window.print()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-3 rounded text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                        </svg>
+                        출력하기 (A4 가로 한 장)
+                    </button>
+                </div>
+            </div>
+
+            <!-- 미배정 학생 목록 (항상 남은 공간을 차지하도록 flex-1 보장) -->
+            <div class="flex-1 flex flex-col min-h-0 bg-gray-50">
+                <div class="p-3 bg-gray-200 text-sm font-bold text-gray-700 flex justify-between items-center shadow-inner shrink-0">
+                    <span>배정 대기 명단</span>
+                    <span id="unassigned-count" class="bg-gray-500 text-white px-2 py-0.5 rounded-full text-xs">0</span>
+                </div>
+                <div id="unassigned-list" class="flex-1 overflow-y-auto p-3 space-y-2" ondragover="allowDrop(event)" ondrop="handleDropOnList(event)">
+                    <!-- 학생 목록이 JS로 생성됩니다 -->
+                </div>
+            </div>
+        </aside>
+
+        <!-- 메인 캔버스 (교실 배치도) -->
+        <main class="flex-1 flex flex-col bg-gray-200 overflow-auto relative p-6">
+            <!-- 상단 컨트롤 (레이아웃 설정) -->
+            <div class="no-print absolute top-6 right-6 bg-white/90 backdrop-blur p-3 rounded-lg shadow border border-gray-200 flex gap-4 z-10">
+                <div class="flex items-center gap-2">
+                    <label class="text-sm font-semibold text-gray-600">모둠 수</label>
+                    <select id="groups-count" class="border border-gray-300 rounded px-2 py-1 text-sm bg-white outline-none focus:border-blue-500" onchange="updateSettingsAndSave()">
+                        <option value="4">4 모둠</option>
+                        <option value="5">5 모둠</option>
+                        <option value="6" selected>6 모둠</option>
+                        <option value="7">7 모둠</option>
+                        <option value="8">8 모둠</option>
+                        <option value="9">9 모둠</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-2">
+                    <label class="text-sm font-semibold text-gray-600">모둠별 인원</label>
+                    <select id="group-size" class="border border-gray-300 rounded px-2 py-1 text-sm bg-white outline-none focus:border-blue-500" onchange="updateSettingsAndSave()">
+                        <option value="4">4 명</option>
+                        <option value="5">5 명</option>
+                        <option value="6" selected>6 명</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex-1 min-h-max flex items-center justify-center">
+                <div id="classroom-container" class="bg-white rounded-2xl shadow-xl p-10 w-full max-w-5xl flex flex-col items-center">
+                    
+                    <!-- 인쇄 시 나타나는 수업명 타이틀 -->
+                    <h1 id="display-title" class="text-3xl font-extrabold text-center mb-6 text-gray-800 w-full empty:hidden min-h-[40px]"></h1>
+                    
+                    <!-- 교실 영역 -->
+                    <div id="classroom-layout" class="flex flex-col w-full items-center gap-10 transition-all duration-500">
+                        
+                        <!-- 칠판 -->
+                        <div id="board-area" class="w-full flex flex-col items-center gap-2 transition-all duration-500">
+                            <div class="w-2/3 max-w-lg h-14 bg-emerald-800 rounded-lg flex items-center justify-center shadow-inner border-4 border-emerald-900">
+                                <span class="text-emerald-100 font-bold tracking-[0.5em] text-lg">칠판</span>
+                            </div>
+                        </div>
+
+                        <!-- 모둠별 책상 그리드 -->
+                        <div id="groups-grid" class="w-full grid gap-x-8 gap-y-10 transition-transform duration-500">
+                            <!-- JS로 모둠이 생성됩니다 -->
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 하단 푸터 영역 -->
+    <footer class="no-print bg-white border-t border-gray-200 py-3 px-6 text-center text-xs font-medium text-gray-500 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] z-20">
+        <span class="inline-block mr-4">만든 사람: 경기도 지구과학 교사 뀨짱</span>
+        <span class="inline-block mr-4">
+            문의: <a href="https://open.kakao.com/o/s7hVU65h" target="_blank" class="text-blue-600 hover:text-blue-800 hover:underline transition">카카오톡 오픈채팅</a>
+        </span>
+        <span class="inline-block">
+            블로그: <a href="https://eduarchive.tistory.com/" target="_blank" class="text-blue-600 hover:text-blue-800 hover:underline transition">뀨짱쌤의 교육자료 아카이브</a>
+        </span>
+    </footer>
+
+    <script>
+        // ==========================================
+        // 데이터 상태 관리 (로컬스토리지 연동)
+        // ==========================================
+        let appState = {
+            classes: [],
+            currentClassId: null
+        };
+        
+        let isLeaderMode = false; // 모둠장 지정 모드 상태
+
+        const STORAGE_KEY = 'smartSeatingChartData';
+
+        function loadData() {
+            const savedData = localStorage.getItem(STORAGE_KEY);
+            if (savedData) {
+                try {
+                    appState = JSON.parse(savedData);
+                } catch (e) {
+                    console.error("데이터 로드 실패", e);
+                }
+            }
+
+            // 학급이 하나도 없으면 기본 학급 생성
+            if (!appState.classes || appState.classes.length === 0) {
+                const defaultClass = createNewClass("새 학급 1");
+                appState.classes = [defaultClass];
+                appState.currentClassId = defaultClass.id;
+            } else if (!appState.currentClassId) {
+                appState.currentClassId = appState.classes[0].id;
+            }
+
+            syncUIWithState();
+        }
+
+        function saveData() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+        }
+
+        function createNewClass(className) {
+            return {
+                id: 'class_' + Date.now(),
+                name: className,
+                title: className,
+                students: [], 
+                groupsCount: 6,
+                groupSize: 6,
+                isTeacherView: false
+            };
+        }
+
+        function getCurrentClass() {
+            return appState.classes.find(c => c.id === appState.currentClassId);
+        }
+
+        // ==========================================
+        // 모둠장 지정 모드 제어
+        // ==========================================
+        function toggleLeaderMode() {
+            isLeaderMode = !isLeaderMode;
+            const btn = document.getElementById('leader-mode-btn');
+            const body = document.getElementById('main-body');
+            
+            if (isLeaderMode) {
+                btn.classList.replace('bg-amber-500', 'bg-red-600');
+                btn.classList.replace('hover:bg-amber-600', 'hover:bg-red-700');
+                btn.innerHTML = '👑 모둠장 지정 켜짐 (학생 클릭)';
+                body.classList.add('leader-mode-active');
+            } else {
+                btn.classList.replace('bg-red-600', 'bg-amber-500');
+                btn.classList.replace('hover:bg-red-700', 'hover:bg-amber-600');
+                btn.innerHTML = '👑 모둠장 지정 (클릭 시 켜짐)';
+                body.classList.remove('leader-mode-active');
+            }
+        }
+
+        function handleDeskClick(occupant) {
+            if (!isLeaderMode || !occupant) return;
+            // 모둠장 상태 토글
+            occupant.isLeader = !occupant.isLeader;
+            saveData();
+            renderClassroom();
+        }
+
+        // ==========================================
+        // 학급 관리 로직
+        // ==========================================
+        function addClass() {
+            const className = prompt("새로운 학급 이름을 입력하세요 (예: 1학년 2반)");
+            if (className && className.trim()) {
+                const newClass = createNewClass(className.trim());
+                appState.classes.push(newClass);
+                appState.currentClassId = newClass.id;
+                saveData();
+                syncUIWithState();
+            }
+        }
+
+        function deleteCurrentClass() {
+            if (appState.classes.length <= 1) {
+                alert("최소 1개의 학급은 유지해야 합니다.");
+                return;
+            }
+            if (confirm(`'${getCurrentClass().name}' 학급을 정말 삭제하시겠습니까? 데이터가 모두 지워집니다.`)) {
+                appState.classes = appState.classes.filter(c => c.id !== appState.currentClassId);
+                appState.currentClassId = appState.classes[0].id; // 남은 첫번째 학급으로 이동
+                saveData();
+                syncUIWithState();
+            }
+        }
+
+        function switchClass() {
+            const selectEl = document.getElementById('class-select');
+            appState.currentClassId = selectEl.value;
+            saveData();
+            syncUIWithState();
+        }
+
+        function updateTitleAndSave() {
+            const curClass = getCurrentClass();
+            const inputVal = document.getElementById('class-title').value;
+            
+            // 수업명 변경 시 타이틀과 학급 이름을 동시에 변경시킴 (동기화)
+            const newClassName = inputVal.trim() === '' ? '새 학급' : inputVal;
+            curClass.title = inputVal;
+            curClass.name = newClassName;
+            
+            document.getElementById('display-title').innerText = inputVal;
+            
+            // 드롭다운(select) 항목의 텍스트도 즉시 변경 (포커스 유지)
+            const selectEl = document.getElementById('class-select');
+            const option = selectEl.querySelector(`option[value="${curClass.id}"]`);
+            if (option) {
+                option.text = newClassName;
+            }
+
+            saveData();
+        }
+
+        function updateSettingsAndSave() {
+            const curClass = getCurrentClass();
+            curClass.groupsCount = parseInt(document.getElementById('groups-count').value);
+            curClass.groupSize = parseInt(document.getElementById('group-size').value);
+            saveData();
+            renderClassroom();
+        }
+
+        // ==========================================
+        // UI & 렌더링 로직
+        // ==========================================
+        function syncUIWithState() {
+            const curClass = getCurrentClass();
+            if (!curClass) return;
+
+            const selectEl = document.getElementById('class-select');
+            selectEl.innerHTML = '';
+            appState.classes.forEach(c => {
+                const option = document.createElement('option');
+                option.value = c.id;
+                option.text = c.name;
+                if(c.id === appState.currentClassId) option.selected = true;
+                selectEl.appendChild(option);
+            });
+
+            document.getElementById('class-title').value = curClass.title || "";
+            document.getElementById('display-title').innerText = curClass.title || "";
+            document.getElementById('groups-count').value = curClass.groupsCount || 6;
+            document.getElementById('group-size').value = curClass.groupSize || 6;
+
+            applyTeacherViewDOM(curClass.isTeacherView);
+            
+            renderClassroom();
+            renderUnassignedList();
+        }
+
+        function applyTeacherViewDOM(isTeacher) {
+            const layout = document.getElementById('classroom-layout');
+            const boardArea = document.getElementById('board-area');
+            const btn = document.getElementById('teacher-view-btn');
+            
+            if(isTeacher) {
+                layout.classList.replace('flex-col', 'flex-col-reverse');
+                boardArea.classList.replace('flex-col', 'flex-col-reverse');
+                btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" /></svg> 학생 시점 (칠판 위로)`;
+                btn.classList.replace('bg-sky-600', 'bg-amber-500');
+                btn.classList.replace('hover:bg-sky-700', 'hover:bg-amber-600');
+            } else {
+                layout.classList.replace('flex-col-reverse', 'flex-col');
+                boardArea.classList.replace('flex-col-reverse', 'flex-col');
+                btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" /></svg> 교사 시점 (칠판 아래로)`;
+                btn.classList.replace('bg-amber-500', 'bg-sky-600');
+                btn.classList.replace('hover:bg-amber-600', 'hover:bg-sky-700');
+            }
+        }
+
+        function toggleTeacherView() {
+            const curClass = getCurrentClass();
+            curClass.isTeacherView = !curClass.isTeacherView;
+            saveData();
+            applyTeacherViewDOM(curClass.isTeacherView);
+            renderClassroom();
+        }
+
+        function renderUnassignedList() {
+            const curClass = getCurrentClass();
+            const listContainer = document.getElementById('unassigned-list');
+            listContainer.innerHTML = '';
+            
+            const unassigned = curClass.students.filter(s => s.deskId === null);
+            document.getElementById('unassigned-count').innerText = unassigned.length;
+
+            if (unassigned.length === 0) {
+                if(curClass.students.length === 0) {
+                    listContainer.innerHTML = `<div class="text-center py-8 text-sm text-gray-400">명렬표를 업로드 해주세요.</div>`;
+                } else {
+                    listContainer.innerHTML = `<div class="text-center py-8 text-sm text-gray-400">모든 학생이 배정되었습니다.</div>`;
+                }
+                return;
+            }
+
+            unassigned.forEach(student => {
+                const el = document.createElement('div');
+                el.className = 'bg-white p-3 rounded-lg shadow-sm border border-gray-200 cursor-grab flex items-center gap-3 hover:border-blue-400 hover:shadow-md transition-all student-item';
+                el.draggable = true;
+                el.ondragstart = (e) => handleDragStart(e, student.id);
+                el.ondragend = handleDragEnd;
+                
+                el.innerHTML = `
+                    <div class="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                        ${student.number}
+                    </div>
+                    <div class="font-medium text-gray-800 truncate">${student.name}</div>
+                `;
+                listContainer.appendChild(el);
+            });
+        }
+
+        function renderClassroom() {
+            const curClass = getCurrentClass();
+            const container = document.getElementById('groups-grid');
+            container.innerHTML = '';
+            
+            const groupsCount = curClass.groupsCount;
+            const groupSize = curClass.groupSize;
+            const isTeacher = curClass.isTeacherView;
+
+            const gridRotationClass = isTeacher ? 'rotate-180' : '';
+            container.className = `w-full grid gap-x-8 gap-y-10 ${groupsCount <= 4 ? 'grid-cols-2 max-w-3xl mx-auto' : 'grid-cols-3'} ${gridRotationClass} transition-transform duration-500`;
+
+            for (let g = 1; g <= groupsCount; g++) {
+                const groupEl = document.createElement('div');
+                groupEl.className = 'relative border-2 border-dashed border-gray-300 rounded-xl p-4 bg-gray-50/50 flex justify-center';
+                
+                const label = document.createElement('div');
+                const labelRotationClass = isTeacher ? 'rotate-180' : '';
+                label.className = `absolute -top-3 left-1/2 -translate-x-1/2 bg-white px-3 py-0.5 text-xs font-bold text-gray-500 rounded-full border border-gray-300 ${labelRotationClass} transition-transform duration-500 z-10`;
+                label.innerText = `${g}모둠`;
+                groupEl.appendChild(label);
+
+                const deskGrid = document.createElement('div');
+                deskGrid.className = `grid grid-cols-2 gap-3 w-full max-w-[200px]`;
+                
+                for (let s = 1; s <= groupSize; s++) {
+                    const deskId = `${g}-${s}`;
+                    const occupant = curClass.students.find(st => st.deskId === deskId);
+
+                    const desk = document.createElement('div');
+                    
+                    const deskRotationClass = isTeacher ? 'rotate-180' : '';
+                    let baseClass = 'desk relative h-20 rounded-lg flex flex-col items-center justify-center transition-all duration-200 overflow-hidden';
+                    
+                    if (groupSize === 5 && s === 5) {
+                        baseClass = 'col-span-1 ' + baseClass;
+                    }
+                    desk.className = `${baseClass} ${deskRotationClass}`;
+                    
+                    desk.ondragover = allowDrop;
+                    desk.ondragenter = (e) => e.target.closest('.desk').classList.add('drag-over');
+                    desk.ondragleave = (e) => e.target.closest('.desk').classList.remove('drag-over');
+                    desk.ondrop = (e) => handleDropOnDesk(e, deskId);
+
+                    if (occupant) {
+                        // 모둠장 여부에 따른 색상 및 테두리 변경
+                        const isL = occupant.isLeader;
+                        const bgColorClass = isL ? 'bg-amber-100 border-amber-500 shadow-md desk-leader' : 'bg-blue-50 border-blue-400 shadow-sm';
+                        const crownBadge = isL ? `<div class="absolute -top-2 -right-2 bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm flex items-center gap-0.5">👑<span class="leading-none">장</span></div>` : '';
+                        const textColor = isL ? 'text-amber-700' : 'text-blue-500';
+
+                        desk.className += ` desk-occupied border-2 ${bgColorClass} cursor-grab student-item`;
+                        desk.draggable = true;
+                        desk.ondragstart = (e) => handleDragStart(e, occupant.id);
+                        desk.ondragend = handleDragEnd;
+                        
+                        // 모둠장 지정 모드를 위한 클릭 이벤트
+                        desk.onclick = () => handleDeskClick(occupant);
+
+                        desk.innerHTML = `
+                            ${crownBadge}
+                            <div class="text-xs font-bold ${textColor} mb-0.5">${occupant.number}번</div>
+                            <div class="font-bold text-gray-800 text-base leading-tight">${occupant.name}</div>
+                        `;
+                    } else {
+                        desk.className += ' desk-empty bg-white border border-gray-300 border-dashed hover:bg-gray-100';
+                        desk.innerHTML = `<span class="text-xs text-gray-400 pointer-events-none">${g}-${s}</span>`;
+                    }
+                    deskGrid.appendChild(desk);
+                }
+                groupEl.appendChild(deskGrid);
+                container.appendChild(groupEl);
+            }
+        }
+
+        // ==========================================
+        // 드래그 앤 드롭 로직
+        // ==========================================
+        function handleDragStart(e, studentId) {
+            if (isLeaderMode) {
+                e.preventDefault(); // 모둠장 지정 모드일때는 드래그 방지
+                return;
+            }
+            e.dataTransfer.setData('studentId', studentId);
+            setTimeout(() => e.target.classList.add('opacity-50'), 0);
+        }
+
+        function handleDragEnd(e) {
+            e.target.classList.remove('opacity-50');
+            document.querySelectorAll('.desk').forEach(d => d.classList.remove('drag-over'));
+        }
+
+        function allowDrop(e) { e.preventDefault(); }
+
+        function handleDropOnDesk(e, deskId) {
+            e.preventDefault();
+            const targetDesk = e.target.closest('.desk');
+            if(targetDesk) targetDesk.classList.remove('drag-over');
+
+            const studentId = e.dataTransfer.getData('studentId');
+            if (!studentId) return;
+
+            const curClass = getCurrentClass();
+            const droppedStudent = curClass.students.find(s => s.id === studentId);
+            const currentOccupant = curClass.students.find(s => s.deskId === deskId);
+
+            if (currentOccupant) currentOccupant.deskId = droppedStudent.deskId;
+            droppedStudent.deskId = deskId;
+
+            saveData();
+            renderClassroom();
+            renderUnassignedList();
+        }
+
+        function handleDropOnList(e) {
+            e.preventDefault();
+            const studentId = e.dataTransfer.getData('studentId');
+            if (!studentId) return;
+
+            const curClass = getCurrentClass();
+            const droppedStudent = curClass.students.find(s => s.id === studentId);
+            droppedStudent.deskId = null;
+
+            saveData();
+            renderClassroom();
+            renderUnassignedList();
+        }
+
+        // ==========================================
+        // 부가 기능 (랜덤, 번호순, 초기화, Excel/CSV 업로드)
+        // ==========================================
+        function sequentialSeats() {
+            const curClass = getCurrentClass();
+            let allDeskIds = [];
+            for(let g=1; g<=curClass.groupsCount; g++) {
+                for(let s=1; s<=curClass.groupSize; s++) {
+                    allDeskIds.push(`${g}-${s}`);
+                }
+            }
+
+            let emptyDesks = allDeskIds.filter(id => !curClass.students.find(st => st.deskId === id));
+            let unassigned = curClass.students.filter(s => s.deskId === null);
+
+            if(unassigned.length === 0) return alert("배정할 대기 학생이 없습니다.");
+
+            unassigned.sort((a, b) => {
+                const numA = parseInt(a.number.replace(/[^0-9]/g, '')) || 0;
+                const numB = parseInt(b.number.replace(/[^0-9]/g, '')) || 0;
+                return numA - numB;
+            });
+
+            const countToAssign = Math.min(emptyDesks.length, unassigned.length);
+            for(let i=0; i < countToAssign; i++) {
+                unassigned[i].deskId = emptyDesks[i];
+            }
+
+            if(unassigned.length > emptyDesks.length) alert("자리가 부족합니다. 모둠 설정을 확인해주세요.");
+            saveData();
+            renderClassroom();
+            renderUnassignedList();
+        }
+
+        function randomizeSeats() {
+            const curClass = getCurrentClass();
+            let allDeskIds = [];
+            for(let g=1; g<=curClass.groupsCount; g++) {
+                for(let s=1; s<=curClass.groupSize; s++) {
+                    allDeskIds.push(`${g}-${s}`);
+                }
+            }
+
+            let emptyDesks = allDeskIds.filter(id => !curClass.students.find(st => st.deskId === id));
+            let unassigned = curClass.students.filter(s => s.deskId === null);
+
+            if(unassigned.length === 0) return alert("배정할 대기 학생이 없습니다.");
+
+            emptyDesks.sort(() => Math.random() - 0.5);
+            unassigned.sort(() => Math.random() - 0.5);
+
+            const countToAssign = Math.min(emptyDesks.length, unassigned.length);
+            for(let i=0; i < countToAssign; i++) {
+                unassigned[i].deskId = emptyDesks[i];
+            }
+
+            if(unassigned.length > emptyDesks.length) alert("자리가 부족합니다. 모둠 설정을 확인해주세요.");
+            saveData();
+            renderClassroom();
+            renderUnassignedList();
+        }
+
+        function resetSeats() {
+            const curClass = getCurrentClass();
+            if(confirm("이 학급의 모든 학생 자리를 초기화하시겠습니까? (대기 명단으로 돌아갑니다)")) {
+                curClass.students.forEach(s => {
+                    s.deskId = null;
+                    s.isLeader = false; // 자리 초기화 시 모둠장 권한도 초기화
+                });
+                saveData();
+                renderClassroom();
+                renderUnassignedList();
+            }
+        }
+
+        // SheetJS(xlsx) 기반의 강력한 엑셀/CSV 파싱 로직
+        document.getElementById('excel-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    
+                    // 첫 번째 시트 선택
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    
+                    // 시트 데이터를 배열의 배열 형태로 파싱 (헤더 무시하고 원본 그대로)
+                    const json = XLSX.utils.sheet_to_json(worksheet, {header: 1});
+                    
+                    let newStudents = [];
+                    let nameColIndex = -1;
+                    let numColIndex = -1;
+
+                    for (let i = 0; i < json.length; i++) {
+                        const row = json[i];
+                        if (!Array.isArray(row) || row.length === 0) continue;
+                        
+                        // 헤더(열 위치) 찾기
+                        if (nameColIndex === -1) {
+                            numColIndex = row.findIndex(c => typeof c === 'string' && c.replace(/\s/g, '').includes('번호'));
+                            nameColIndex = row.findIndex(c => {
+                                if (typeof c !== 'string') return false;
+                                const str = c.replace(/\s/g, '');
+                                return str.includes('성명') || str.includes('이름');
+                            });
+                            continue;
+                        }
+
+                        // 학생 데이터 파싱
+                        if (nameColIndex !== -1 && row.length > nameColIndex) {
+                            const name = String(row[nameColIndex]).trim();
+                            // 번호열이 있으면 사용하고, 없으면 순서대로 부여
+                            const number = (numColIndex !== -1 && row[numColIndex] !== undefined && row[numColIndex] !== null) 
+                                           ? String(row[numColIndex]).trim() 
+                                           : String(newStudents.length + 1);
+
+                            // 이름 값이 유효한지(비어있지 않고, 숫자만 있는게 아닌지) 체크
+                            if (name && name !== 'undefined' && name !== 'null' && isNaN(name)) {
+                                newStudents.push({
+                                    id: `upload_${Date.now()}_${i}`,
+                                    number: number,
+                                    name: name,
+                                    deskId: null,
+                                    isLeader: false // 모둠장 속성 기본값 추가
+                                });
+                            }
+                        }
+                    }
+
+                    if (newStudents.length > 0) {
+                        const curClass = getCurrentClass();
+                        curClass.students = newStudents;
+                        saveData();
+                        syncUIWithState();
+                        alert(`'${curClass.name}' 학급에 ${newStudents.length}명의 명단이 성공적으로 업로드되었습니다.`);
+                    } else {
+                        alert("명단을 인식하지 못했습니다. 파일 양식에 '번호', '성명'(또는 이름) 이라는 글자가 포함된 열(가로줄)이 있는지 확인해주세요.");
+                    }
+                } catch (error) {
+                    console.error(error);
+                    alert("파일을 읽는 중 오류가 발생했습니다. 정상적인 엑셀(xls, xlsx) 또는 CSV 파일인지 확인해주세요.");
+                }
+                
+                // 파일 인풋 초기화 (같은 파일 다시 업로드 가능하도록)
+                e.target.value = '';
+            };
+            
+            // 바이너리 데이터로 읽어들여 엑셀 라이브러리로 처리
+            reader.readAsArrayBuffer(file);
+        });
+
+        // 앱 초기화
+        document.addEventListener('DOMContentLoaded', () => {
+            loadData();
+        });
+
+    </script>
+</body>
+</html>
