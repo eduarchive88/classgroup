@@ -128,7 +128,7 @@
             </div>
 
             <!-- 기능 및 업로드 컨트롤 (화면이 작을 때 자체 스크롤 발생하도록 수정) -->
-            <div class="p-4 border-b border-gray-100 space-y-4 overflow-y-auto shrink-0 max-h-[40vh]">
+            <div id="settings-panel" class="p-4 border-b border-gray-100 space-y-4 overflow-y-auto shrink-0 max-h-[40vh]">
                 <!-- 수업명 입력 -->
                 <div>
                     <label class="block text-xs font-semibold text-gray-600 mb-1">수업명 (인쇄용 제목)</label>
@@ -160,7 +160,15 @@
                         [나이스] - [교과담임] - [출결관리] - [교과시간별출석부출력] - [디스켓 클릭 - xls저장] 후 업로드 하세요.
                     </div>
                     
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">명렬표 (XLS, XLSX, CSV) 업로드</label>
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="block text-xs font-semibold text-gray-600">명렬표 (XLS, XLSX, CSV) 업로드</label>
+                        <button onclick="downloadSample()" class="text-[10px] bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded text-blue-700 hover:bg-blue-100 transition shadow-sm flex items-center gap-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            샘플 양식
+                        </button>
+                    </div>
                     <input type="file" id="excel-upload" accept=".csv, .xls, .xlsx" class="block w-full text-xs text-gray-500 mb-3
                         file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 cursor-pointer"/>
                     
@@ -176,8 +184,13 @@
             <!-- 미배정 학생 목록 (항상 남은 공간을 차지하도록 flex-1 보장) -->
             <div class="flex-1 flex flex-col min-h-0 bg-gray-50">
                 <div class="p-3 bg-gray-200 text-sm font-bold text-gray-700 flex justify-between items-center shadow-inner shrink-0">
-                    <span>배정 대기 명단</span>
-                    <span id="unassigned-count" class="bg-gray-500 text-white px-2 py-0.5 rounded-full text-xs">0</span>
+                    <div class="flex items-center gap-1.5">
+                        <span>배정 대기 명단</span>
+                        <span id="unassigned-count" class="bg-gray-500 text-white px-2 py-0.5 rounded-full text-xs">0</span>
+                    </div>
+                    <button onclick="toggleExpandList()" id="expand-list-btn" class="text-xs bg-white border border-gray-300 text-gray-600 px-2 py-1 rounded hover:bg-gray-50 transition shadow-sm font-medium">
+                        확대하기 ↑
+                    </button>
                 </div>
                 <div id="unassigned-list" class="flex-1 overflow-y-auto p-3 space-y-2" ondragover="allowDrop(event)" ondrop="handleDropOnList(event)">
                     <!-- 학생 목록이 JS로 생성됩니다 -->
@@ -258,6 +271,7 @@
         };
         
         let isLeaderMode = false; // 모둠장 지정 모드 상태
+        let isListExpanded = false; // 대기 명단 확대 모드 상태
 
         const STORAGE_KEY = 'smartSeatingChartData';
 
@@ -330,6 +344,21 @@
             occupant.isLeader = !occupant.isLeader;
             saveData();
             renderClassroom();
+        }
+
+        // 대기 명단 확대/축소 로직
+        function toggleExpandList() {
+            isListExpanded = !isListExpanded;
+            const panel = document.getElementById('settings-panel');
+            const btn = document.getElementById('expand-list-btn');
+            
+            if (isListExpanded) {
+                panel.classList.add('hidden');
+                btn.innerHTML = '축소하기 ↓';
+            } else {
+                panel.classList.remove('hidden');
+                btn.innerHTML = '확대하기 ↑';
+            }
         }
 
         // ==========================================
@@ -819,6 +848,34 @@
             // 바이너리 데이터로 읽어들여 엑셀 라이브러리로 처리
             reader.readAsArrayBuffer(file);
         });
+
+        // ==========================================
+        // 샘플 양식 다운로드 로직
+        // ==========================================
+        function downloadSample() {
+            const ws_data = [
+                ['학년', '반', '번호', '성명', '비고'],
+                ['1', '1', '1', '홍길동', ''],
+                ['1', '1', '2', '박땡땡', ''],
+                ['1', '1', '3', '김땡땡', ''],
+                ['1', '1', '4', '이땡땡', ''],
+                ['1', '1', '5', '최땡땡', '']
+            ];
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+            
+            // 엑셀 열 너비 약간 조정
+            ws['!cols'] = [
+                { wch: 6 },  // 학년
+                { wch: 6 },  // 반
+                { wch: 6 },  // 번호
+                { wch: 10 }, // 성명
+                { wch: 15 }  // 비고
+            ];
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "명렬표");
+            XLSX.writeFile(wb, "나이스담임명렬표_샘플.xlsx");
+        }
 
         // 앱 초기화
         document.addEventListener('DOMContentLoaded', () => {
