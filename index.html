@@ -172,12 +172,20 @@
                     <input type="file" id="excel-upload" accept=".csv, .xls, .xlsx" class="block w-full text-xs text-gray-500 mb-3
                         file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 cursor-pointer"/>
                     
-                    <button onclick="window.print()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-3 rounded text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-sm">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                        </svg>
-                        출력하기 (A4 가로 한 장)
-                    </button>
+                    <div class="flex flex-col gap-2">
+                        <button onclick="downloadAssignedRoster()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-3 rounded text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-sm">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            배정 결과 엑셀 다운로드
+                        </button>
+                        <button onclick="window.print()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-3 rounded text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-sm">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                            </svg>
+                            출력하기 (A4 가로 한 장)
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -790,6 +798,8 @@
                     let newStudents = [];
                     let nameColIndex = -1;
                     let numColIndex = -1;
+                    let gradeColIndex = -1; // 학년 열 인덱스 추가
+                    let classColIndex = -1; // 반 열 인덱스 추가
 
                     for (let i = 0; i < json.length; i++) {
                         const row = json[i];
@@ -803,6 +813,8 @@
                                 const str = c.replace(/\s/g, '');
                                 return str.includes('성명') || str.includes('이름');
                             });
+                            gradeColIndex = row.findIndex(c => typeof c === 'string' && c.replace(/\s/g, '').includes('학년'));
+                            classColIndex = row.findIndex(c => typeof c === 'string' && c.replace(/\s/g, '').includes('반'));
                             continue;
                         }
 
@@ -813,11 +825,17 @@
                             const number = (numColIndex !== -1 && row[numColIndex] !== undefined && row[numColIndex] !== null) 
                                            ? String(row[numColIndex]).trim() 
                                            : String(newStudents.length + 1);
+                                           
+                            // 학년, 반 데이터 추출
+                            const grade = (gradeColIndex !== -1 && row[gradeColIndex] !== undefined && row[gradeColIndex] !== null) ? String(row[gradeColIndex]).trim() : '';
+                            const classNum = (classColIndex !== -1 && row[classColIndex] !== undefined && row[classColIndex] !== null) ? String(row[classColIndex]).trim() : '';
 
                             // 이름 값이 유효한지(비어있지 않고, 숫자만 있는게 아닌지) 체크
                             if (name && name !== 'undefined' && name !== 'null' && isNaN(name)) {
                                 newStudents.push({
                                     id: `upload_${Date.now()}_${i}`,
+                                    grade: grade,       // 학년 정보 저장
+                                    classNum: classNum, // 반 정보 저장
                                     number: number,
                                     name: name,
                                     deskId: null,
@@ -875,6 +893,64 @@
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "명렬표");
             XLSX.writeFile(wb, "나이스담임명렬표_샘플.xlsx");
+        }
+
+        // ==========================================
+        // 배정 결과 엑셀 다운로드 로직
+        // ==========================================
+        function downloadAssignedRoster() {
+            const curClass = getCurrentClass();
+            if (!curClass || curClass.students.length === 0) {
+                alert("다운로드할 명단이 없습니다.");
+                return;
+            }
+
+            // A:학년, B:반, C:번호, D:성명, E:배정모둠 (요청하신 E열 위치)
+            const ws_data = [
+                ['학년', '반', '번호', '성명', '배정모둠']
+            ];
+
+            // 번호순으로 정렬
+            const sortedStudents = [...curClass.students].sort((a, b) => {
+                const numA = parseInt(a.number.replace(/[^0-9]/g, '')) || 0;
+                const numB = parseInt(b.number.replace(/[^0-9]/g, '')) || 0;
+                return numA - numB;
+            });
+
+            sortedStudents.forEach(student => {
+                let seatInfo = "미배정";
+                if (student.deskId) {
+                    const parts = student.deskId.split('-');
+                    seatInfo = `${parts[0]}모둠`; // E열에 모둠 번호 기입
+                    if (student.isLeader) {
+                        seatInfo += " (모둠장)";
+                    }
+                }
+                
+                // 저장된 학년, 반 정보를 가져와서 엑셀에 기입 (없으면 빈칸)
+                const gradeVal = student.grade || '';
+                const classVal = student.classNum || '';
+                
+                ws_data.push([gradeVal, classVal, student.number, student.name, seatInfo]);
+            });
+
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+            
+            // 엑셀 열 너비 조정
+            ws['!cols'] = [
+                { wch: 6 },  // 학년
+                { wch: 6 },  // 반
+                { wch: 6 },  // 번호
+                { wch: 10 }, // 성명
+                { wch: 20 }  // 배정모둠 (E열)
+            ];
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "배정결과");
+            
+            // 파일명: 학급명_배정결과_날짜.xlsx
+            const dateStr = new Date().toISOString().slice(0, 10);
+            XLSX.writeFile(wb, `${curClass.name}_배정결과_${dateStr}.xlsx`);
         }
 
         // 앱 초기화
